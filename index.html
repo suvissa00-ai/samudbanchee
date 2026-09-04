@@ -183,7 +183,6 @@ td.date-cell{font-family:var(--mono);font-size:12px;color:var(--ink2);}
 // ══════════════════════════════════════════════════════
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 const SHEET_NAME = 'รายการ';
-const DISCOVERY_DOC = 'https://sheets.googleapis.com/$discovery/rest?version=v4';
 
 // Categories (sync with หมวดหมู่อ้างอิง sheet)
 const CATS = {
@@ -199,7 +198,6 @@ const PALETTE = ['#2E6E4E','#4A2E6E','#7A6020','#8B3B2E','#2E4E6E','#6E4A2E','#4
 //  STATE
 // ══════════════════════════════════════════════════════
 let cfg = {};   // {clientId, sheetId}
-let gapi, tokenClient;
 let rows = [];  // parsed data from Sheets
 let charts = {};
 let activeTab = 'overview';
@@ -281,96 +279,66 @@ function renderSetup(){
 }
 
 // ══════════════════════════════════════════════════════
-//  GOOGLE API INIT + AUTH
+//  GOOGLE AUTH (GSI only — no gapi library)
 // ══════════════════════════════════════════════════════
+let accessToken = null;
+
 async function connectSheets(){
   const clientId = document.getElementById('inp-client').value.trim();
   const sheetId  = document.getElementById('inp-sheet').value.trim();
   if(!clientId||!sheetId){ showToast('กรุณากรอก Client ID และ Spreadsheet ID'); return; }
   cfg = {clientId, sheetId};
   saveCfg(cfg);
-  await initGapi();
+  await initGSI();
 }
 
-function loadScript(id, src, onload){
+function initGSI(){
   return new Promise((resolve, reject)=>{
-    if(document.getElementById(id)){ resolve(); return; }
+    setStatus('spin','กำลังโหลด Google Sign-In...');
+    if(window.google?.accounts?.oauth2){
+      requestToken(); resolve(); return;
+    }
     const s=document.createElement('script');
-    s.id=id; s.src=src;
-    s.onload=()=>{ resolve(); };
-    s.onerror=()=>reject(new Error('Failed to load: '+src));
+    s.src='https://accounts.google.com/gsi/client';
+    s.onload=()=>{ requestToken(); resolve(); };
+    s.onerror=()=>{ 
+      setStatus('err','โหลด Google Sign-In ล้มเหลว'); 
+      showToast('❌ โหลด Google Sign-In ล้มเหลว — ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
+      reject(new Error('GSI load failed')); 
+    };
     document.head.appendChild(s);
   });
 }
 
-async function initGapi(){
-  try{
-    setStatus('spin','กำลังโหลด Google API...');
-
-    // Step 1: load gapi with onload callback pattern (Google's recommended way)
-    await new Promise((resolve, reject)=>{
-      if(window.gapi){ resolve(); return; }
-      window.gapiOnLoad = resolve;
-      const s=document.createElement('script');
-      s.id='gapi-script';
-      s.src='https://apis.google.com/js/api.js?onload=gapiOnLoad';
-      s.onerror=()=>reject(new Error('gapi load failed'));
-      document.head.appendChild(s);
-    });
-
-    // Step 2: load client module
-    await new Promise((resolve, reject)=>{
-      window.gapi.load('client', {callback: resolve, onerror: reject, timeout: 10000, ontimeout: reject});
-    });
-
-    // Step 3: init with discovery doc
-    await window.gapi.client.init({discoveryDocs:[DISCOVERY_DOC]});
-
-    // Step 4: load GSI
-    await new Promise((resolve, reject)=>{
-      if(window.google?.accounts){ resolve(); return; }
-      const s=document.createElement('script');
-      s.id='gsi-script';
-      s.src='https://accounts.google.com/gsi/client';
-      s.onload=resolve;
-      s.onerror=()=>reject(new Error('GSI load failed'));
-      document.head.appendChild(s);
-    });
-
-    // Step 5: request token
-    requestToken();
-  }catch(e){
-    setStatus('err','โหลด API ล้มเหลว: '+e.message);
-    showToast('❌ '+e.message);
-    console.error('initGapi error:', e);
-  }
-}
-
-function loadTokenClient(){}
-
 function requestToken(){
-  tokenClient = google.accounts.oauth2.initTokenClient({
+  setStatus('spin','รอ login Google...');
+  const client = google.accounts.oauth2.initTokenClient({
     client_id: cfg.clientId,
     scope: SCOPES,
     callback: async(resp)=>{
-      if(resp.error){ setStatus('err','เชื่อมต่อล้มเหลว'); showToast('❌ '+resp.error); return; }
+      if(resp.error){ 
+        setStatus('err','Login ล้มเหลว: '+resp.error); 
+        showToast('❌ '+resp.error); 
+        return; 
+      }
+      accessToken = resp.access_token;
       setStatus('spin','กำลังโหลดข้อมูล...');
       await loadSheetData();
       renderApp();
     }
   });
-  tokenClient.requestAccessToken({prompt:'consent'});
+  client.requestAccessToken({prompt:'consent'});
 }
 
 function logout(){
-  const token = gapi?.client?.getToken();
-  if(token) google.accounts.oauth2.revoke(token.access_token);
-  gapi?.client?.setToken('');
+  if(accessToken) google.accounts.oauth2.revoke(accessToken);
+  accessToken = null;
   rows = [];
   renderSetup();
 }
 
 async function syncNow(){
+  if(!accessToken){ showToast('กรุณา login ใหม่'); renderSetup(); return; }
   setStatus('spin','กำลังรีเฟรช...');
   await loadSheetData();
   renderPanel();
@@ -379,21 +347,35 @@ async function syncNow(){
 }
 
 // ══════════════════════════════════════════════════════
-//  SHEET I/O
+//  SHEET I/O — ใช้ fetch REST API โดยตรง (ไม่ใช้ gapi)
 // ══════════════════════════════════════════════════════
+async function sheetsGet(range){
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cfg.sheetId)}/values/${encodeURIComponent(range)}`;
+  const resp = await fetch(url, {headers:{Authorization:'Bearer '+accessToken}});
+  if(!resp.ok) throw new Error('Sheets GET failed: '+resp.status);
+  return resp.json();
+}
+
+async function sheetsAppend(range, values){
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(cfg.sheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`;
+  const resp = await fetch(url, {
+    method:'POST',
+    headers:{Authorization:'Bearer '+accessToken, 'Content-Type':'application/json'},
+    body: JSON.stringify({values})
+  });
+  if(!resp.ok) throw new Error('Sheets APPEND failed: '+resp.status);
+  return resp.json();
+}
+
 async function loadSheetData(){
   try{
-    const resp = await gapi.client.sheets.spreadsheets.values.get({
-      spreadsheetId: cfg.sheetId,
-      range: `${SHEET_NAME}!A:I`,
-    });
-    const rawRows = resp.result.values || [];
-    // skip header row (row 0)
+    const data = await sheetsGet(`${SHEET_NAME}!A:I`);
+    const rawRows = data.values || [];
     rows = rawRows.slice(1).map(parseRow).filter(r=>r&&r.amount>0);
     return true;
   }catch(e){
     setStatus('err','โหลดข้อมูลไม่สำเร็จ');
-    showToast('❌ โหลดข้อมูลไม่สำเร็จ: '+e.message);
+    showToast('❌ '+e.message);
     return false;
   }
 }
@@ -429,19 +411,13 @@ function parseRow(r){
 }
 
 async function appendRow(rec){
-  // Convert to sheet row array
   const row = [
     rec.date, rec.kind==='income'?'รายรับ':'รายจ่าย', rec.group,
     rec.category, rec.broker||'', rec.nature||'', rec.item,
     rec.amount, rec.note||'',
   ];
   try{
-    await gapi.client.sheets.spreadsheets.values.append({
-      spreadsheetId: cfg.sheetId,
-      range: `${SHEET_NAME}!A:I`,
-      valueInputOption: 'USER_ENTERED',
-      resource: { values:[row] },
-    });
+    await sheetsAppend(`${SHEET_NAME}!A:I`, [row]);
     return true;
   }catch(e){
     showToast('❌ บันทึกไม่สำเร็จ: '+e.message);
