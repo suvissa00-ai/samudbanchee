@@ -722,11 +722,17 @@ function buildCharts(r){
 // ══════════════════════════════════════════════════════
 (async function boot(){
   cfg = loadCfg();
+  // Always show setup first so user can verify/edit config
+  // Auto-connect only if config exists AND user clicks connect
+  renderSetup();
   if(cfg.clientId && cfg.sheetId){
-    setStatus('spin','กำลังโหลด...');
-    await initGapi();
-  } else {
-    renderSetup();
+    // pre-fill and show a reconnect message
+    setTimeout(()=>{
+      const el = document.getElementById('inp-client');
+      const el2 = document.getElementById('inp-sheet');
+      if(el) el.value = cfg.clientId;
+      if(el2) el2.value = cfg.sheetId;
+    }, 100);
   }
 })();
 </script>
