@@ -292,36 +292,32 @@ async function connectSheets(){
   await initGapi();
 }
 
-function initGapi(){
-  return new Promise((resolve)=>{
-    // load gapi script
-    if(document.getElementById('gapi-script')){
-      resolve();
-      loadGapiClient();
-      return;
-    }
+function loadScript(id, src){
+  return new Promise((resolve, reject)=>{
+    if(document.getElementById(id)){ resolve(); return; }
     const s=document.createElement('script');
-    s.id='gapi-script';
-    s.src='https://apis.google.com/js/api.js';
-    s.onload=()=>{
-      window.gapi.load('client',async()=>{
-        await window.gapi.client.init({discoveryDocs:[DISCOVERY_DOC]});
-        loadTokenClient();
-        resolve();
-      });
-    };
+    s.id=id; s.src=src;
+    s.onload=resolve;
+    s.onerror=()=>reject(new Error('Failed to load: '+src));
     document.head.appendChild(s);
   });
 }
 
-function loadTokenClient(){
-  if(document.getElementById('gsi-script')){ requestToken(); return; }
-  const s=document.createElement('script');
-  s.id='gsi-script';
-  s.src='https://accounts.google.com/gsi/client';
-  s.onload=()=>{ requestToken(); };
-  document.head.appendChild(s);
+async function initGapi(){
+  try{
+    setStatus('spin','กำลังโหลด Google API...');
+    await loadScript('gapi-script','https://apis.google.com/js/api.js');
+    await new Promise(resolve=>window.gapi.load('client', resolve));
+    await window.gapi.client.init({discoveryDocs:[DISCOVERY_DOC]});
+    await loadScript('gsi-script','https://accounts.google.com/gsi/client');
+    requestToken();
+  }catch(e){
+    setStatus('err','โหลด API ล้มเหลว');
+    showToast('❌ '+e.message);
+  }
 }
+
+function loadTokenClient(){}
 
 function requestToken(){
   tokenClient = google.accounts.oauth2.initTokenClient({
