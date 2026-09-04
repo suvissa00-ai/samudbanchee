@@ -568,14 +568,15 @@ function renderTransactions(r){
     <span class="cnt">${f.length.toLocaleString()} รายการ</span>
   </div>
   <div class="tbl-wrap"><table>
-    <thead><tr><th>วันที่</th><th>รายการ</th><th>หมวดหมู่</th><th>Broker</th><th>ประเภท</th><th style="text-align:right">จำนวน</th></tr></thead>
+    <thead><tr><th>วันที่</th><th>รายการ</th><th>หมวดหมู่</th><th>Broker</th><th>ประเภท</th><th style="text-align:right">จำนวน</th><th>โน้ต</th></tr></thead>
     <tbody>${shown.map(x=>`<tr>
       <td class="date-cell">${fmtDate(x.date)}</td>
-      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.item)||'<span style="color:var(--ink3)">—</span>'}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.item)||'<span style="color:var(--ink3)">—</span>'}</td>
       <td><span class="chip ${x.group==='การลงทุน'?'invest':'personal'}">${esc(x.category)}</span>${x.nature?` <span style="font-size:10px;color:var(--ink3)">·${x.nature}</span>`:''}</td>
       <td style="font-size:12px;color:var(--ink2)">${esc(x.broker)}</td>
       <td><span class="chip ${x.kind}">${x.kind==='income'?'รายรับ':'รายจ่าย'}</span></td>
       <td class="num ${x.kind}">${x.kind==='income'?'+':'-'}${fmtMoney(x.amount).replace('฿','฿')}</td>
+      <td style="font-size:12px;color:var(--ink3);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.note)||''}</td>
     </tr>`).join('')||'<tr><td colspan="6" class="empty">ไม่พบรายการ</td></tr>'}
     </tbody>
   </table>${f.length>300?`<div style="padding:10px;text-align:center;font-size:12px;color:var(--ink3)">แสดง 300 จาก ${f.length} รายการ — ใช้ช่องค้นหาเพื่อกรอง</div>`:''}
