@@ -292,12 +292,12 @@ async function connectSheets(){
   await initGapi();
 }
 
-function loadScript(id, src){
+function loadScript(id, src, onload){
   return new Promise((resolve, reject)=>{
     if(document.getElementById(id)){ resolve(); return; }
     const s=document.createElement('script');
     s.id=id; s.src=src;
-    s.onload=resolve;
+    s.onload=()=>{ resolve(); };
     s.onerror=()=>reject(new Error('Failed to load: '+src));
     document.head.appendChild(s);
   });
@@ -306,14 +306,43 @@ function loadScript(id, src){
 async function initGapi(){
   try{
     setStatus('spin','กำลังโหลด Google API...');
-    await loadScript('gapi-script','https://apis.google.com/js/api.js');
-    await new Promise(resolve=>window.gapi.load('client', resolve));
+
+    // Step 1: load gapi with onload callback pattern (Google's recommended way)
+    await new Promise((resolve, reject)=>{
+      if(window.gapi){ resolve(); return; }
+      window.gapiOnLoad = resolve;
+      const s=document.createElement('script');
+      s.id='gapi-script';
+      s.src='https://apis.google.com/js/api.js?onload=gapiOnLoad';
+      s.onerror=()=>reject(new Error('gapi load failed'));
+      document.head.appendChild(s);
+    });
+
+    // Step 2: load client module
+    await new Promise((resolve, reject)=>{
+      window.gapi.load('client', {callback: resolve, onerror: reject, timeout: 10000, ontimeout: reject});
+    });
+
+    // Step 3: init with discovery doc
     await window.gapi.client.init({discoveryDocs:[DISCOVERY_DOC]});
-    await loadScript('gsi-script','https://accounts.google.com/gsi/client');
+
+    // Step 4: load GSI
+    await new Promise((resolve, reject)=>{
+      if(window.google?.accounts){ resolve(); return; }
+      const s=document.createElement('script');
+      s.id='gsi-script';
+      s.src='https://accounts.google.com/gsi/client';
+      s.onload=resolve;
+      s.onerror=()=>reject(new Error('GSI load failed'));
+      document.head.appendChild(s);
+    });
+
+    // Step 5: request token
     requestToken();
   }catch(e){
-    setStatus('err','โหลด API ล้มเหลว');
+    setStatus('err','โหลด API ล้มเหลว: '+e.message);
     showToast('❌ '+e.message);
+    console.error('initGapi error:', e);
   }
 }
 
